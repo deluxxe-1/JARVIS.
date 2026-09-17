@@ -35,7 +35,7 @@ class MemoryManager:
         source: str = "extracted",
         importance: float = 0.5,
     ) -> Memory:
-        """Store a new memory with its embedding vector."""
+        """Store a new memory with its embedding vector, resolving duplicates or contradictions."""
         # 1. Generate embedding for the content
         embedding = await self.embedding_client.embed(content)
         
@@ -50,8 +50,13 @@ class MemoryManager:
             await self.db.commit()
             await self.db.refresh(existing)
             return existing
+
+        # 3. Contradiction / Supersede resolution:
+        # Check if there are moderately similar memories in the same category (similarity 0.65 - 0.92)
+        # and verify with LLM if the new fact contradicts/replaces the old one.
+        await self._resolve_contradictions(user_id, content, category, embedding)
         
-        # 3. Create new memory
+        # 4. Create new memory
         memory = Memory(
             user_id=user_id,
             content=content,
@@ -239,6 +244,66 @@ class MemoryManager:
         
         return memories, total
     
+    async def _resolve_contradictions(
+        self,
+        user_id: uuid.UUID,
+        new_content: str,
+        category: str,
+        embedding: list[float],
+    ) -> None:
+        """Finds memories that might conflict with the new memory and deactivates outdated ones."""
+        embedding_str = str(embedding)
+        result = await self.db.execute(
+            text("""
+                SELECT id, content, category
+                FROM memories
+                WHERE user_id = :user_id
+                  AND is_active = true
+                  AND 1 - (embedding <=> :embedding::vector) BETWEEN 0.60 AND 0.92
+                ORDER BY embedding <=> :embedding::vector
+                LIMIT 3
+            """),
+            {
+                "embedding": embedding_str,
+                "user_id": str(user_id),
+            },
+        )
+        candidates = result.fetchall()
+        if not candidates:
+            return
+
+        from app.core.llm_client import LLMClient
+        llm = LLMClient()
+
+        for cand in candidates:
+            # Check with LLM if the new fact supersedes or directly contradicts the candidate fact
+            prompt = [
+                {
+                    "role": "system",
+                    "content": (
+                        "You determine if a new fact updates, contradicts, or supersedes an older fact about a person. "
+                        "Respond ONLY with 'SUPERSEDES' if the new fact makes the old one outdated or obsolete "
+                        "(e.g., Old: 'Lives in Valencia', New: 'Moved to Madrid', or Old: 'Single', New: 'Got married'). "
+                        "Respond 'COMPATIBLE' if both can be true simultaneously. "
+                        "Respond ONLY with the word SUPERSEDES or COMPATIBLE."
+                    )
+                },
+                {
+                    "role": "user",
+                    "content": f"Old Fact: \"{cand.content}\"\nNew Fact: \"{new_content}\""
+                }
+            ]
+            try:
+                comp = await llm.chat(prompt, temperature=0.0)
+                answer = comp.choices[0].message.content.strip().upper() if comp.choices else ""
+                if "SUPERSEDES" in answer:
+                    logger.info(f"Superseding memory {cand.id} ('{cand.content}') with new fact ('{new_content}')")
+                    await self.db.execute(
+                        update(Memory).where(Memory.id == cand.id).values(is_active=False)
+                    )
+            except Exception as e:
+                logger.warning(f"Failed contradiction check between '{cand.content}' and '{new_content}': {e}")
+
     async def _find_duplicate(
         self,
         user_id: uuid.UUID,

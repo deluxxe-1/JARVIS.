@@ -29,9 +29,16 @@ class Settings(BaseSettings):
     # FCM
     fcm_server_key: str = ""
     
-    # App
+    # App & Security
     log_level: str = "INFO"
     app_name: str = "ARIA"
+    cors_origins: list[str] = [
+        "http://localhost",
+        "http://localhost:3000",
+        "http://localhost:8080",
+        "http://127.0.0.1",
+        "app://aria",
+    ]
     
     # Memory
     memory_top_k: int = 8  # Number of memories to retrieve for RAG context

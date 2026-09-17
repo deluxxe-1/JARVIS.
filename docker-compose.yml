@@ -50,7 +50,7 @@ services:
   aria-worker:
     build:
       context: ./backend
-    command: celery -A app.workers.celery_app worker -l info
+    command: celery -A app.workers.celery_app worker --beat -l info
     depends_on:
       postgres:
         condition: service_healthy

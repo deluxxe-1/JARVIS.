@@ -120,14 +120,19 @@ class Orchestrator:
         
         await self._save_assistant_message(conversation.id, final_response)
         
-        # 9. Trigger async memory extraction (non-blocking)
+        # 9. Trigger debounced memory extraction in background (5 mins countdown)
         try:
-            from app.workers.memory_extractor import extract_memories
-            all_msgs = [
-                {"role": "user", "content": request.message},
-                {"role": "assistant", "content": final_response},
-            ]
-            extract_memories.delay(str(user_id), all_msgs)
+            import redis
+            from app.workers.memory_extractor import extract_memories_for_conversation
+            now_ts = datetime.now(timezone.utc).timestamp()
+            r = redis.from_url(self.settings.redis_url)
+            r.set(f"conv_extract_time:{conversation.id}", str(now_ts), ex=600)
+
+            # Schedule task with 300s (5 minutes) countdown
+            extract_memories_for_conversation.apply_async(
+                args=[str(user_id), str(conversation.id)],
+                countdown=300,
+            )
         except Exception as e:
             logger.warning(f"Could not queue memory extraction: {e}")
         

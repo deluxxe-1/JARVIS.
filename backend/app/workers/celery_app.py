@@ -18,9 +18,16 @@ celery_app.conf.update(
     task_track_started=True,
     task_acks_late=True,
     worker_prefetch_multiplier=1,
-    # Schedule for periodic tasks (price monitoring will go here in Phase 2)
-    beat_schedule={},
+    beat_schedule={
+        "check-market-alerts-every-minute": {
+            "task": "check_market_alerts",
+            "schedule": 60.0,
+        },
+    },
 )
 
 # Auto-discover tasks from workers module
 celery_app.autodiscover_tasks(["app.workers"])
+
+from app.workers import price_monitor  # noqa: F401
+from app.workers import memory_extractor  # noqa: F401

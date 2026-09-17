@@ -76,7 +76,28 @@ class LLMClient:
             current_messages.append(message)
             
             if not message.tool_calls:
-                # No tools called, return final text
+                # Fallback check for 8B models that output tool calls in text/markdown instead of native schema
+                if message.content and ("```json" in message.content or "<tool_call>" in message.content):
+                    import re
+                    json_block = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', message.content, re.DOTALL)
+                    if json_block:
+                        try:
+                            parsed = json.loads(json_block.group(1))
+                            if "name" in parsed and ("arguments" in parsed or "parameters" in parsed):
+                                func_name = parsed["name"]
+                                func_args = parsed.get("arguments") or parsed.get("parameters") or {}
+                                logger.info(f"Fallback extracted tool call from text: {func_name} with {func_args}")
+                                try:
+                                    res = await tool_executor(func_name, func_args)
+                                except Exception as e:
+                                    res = {"error": str(e)}
+                                tool_calls_made.append({"name": func_name, "arguments": func_args, "result": res})
+                                current_messages.append({"role": "tool", "name": func_name, "content": json.dumps(res)})
+                                continue
+                        except Exception:
+                            pass
+
+                # No tools called or extracted, return final text
                 return message.content or "", tool_calls_made
                 
             for tool_call in message.tool_calls:
