@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+venv/
+.env
+
+# pytest
+.pytest_cache/
+
+# Docker
+.docker/
+
+# Node
+node_modules/
+
+# Flutter / Dart
+.dart_tool/
+.packages
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
